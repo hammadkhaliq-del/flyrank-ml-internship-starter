@@ -1,0 +1,89 @@
+{
+  "data": {
+    "warehouse_total_rows_approx": 79000000,
+    "march_eligible_pages": 176738,
+    "matched_april_pages": 158549,
+    "distinct_clients": 46,
+    "april_partition_rows": 10424730,
+    "churn_gap_rows_dropped": 18189,
+    "churn_gap_pct": 10.3
+  },
+  "split": {
+    "train_rows": 135314,
+    "train_clients": 34,
+    "test_rows": 23235,
+    "test_clients": 12,
+    "test_base_rate": 0.47
+  },
+  "leakage_audit_logreg": {
+    "random_split": { "roc_auc": 0.628, "f1": 0.581, "clients_leaked": 45 },
+    "grouped_split": { "roc_auc": 0.664, "f1": 0.615, "clients_leaked": 0 }
+  },
+  "final_model_random_forest": {
+    "roc_auc": 0.637,
+    "precision": 0.558,
+    "recall": 0.688,
+    "f1": 0.616,
+    "flag_rate": 0.579
+  },
+  "rule_baseline": {
+    "flag_rate": 0.474
+  },
+  "rule_model_agreement_rate": 0.695,
+  "action_mix_test_set": {
+    "n_total": 23235,
+    "refresh_title_meta_review_ctr": 6877,
+    "no_action_thin_evidence": 5994,
+    "monitor_only": 5713,
+    "human_review_required": 4651,
+    "thin_evidence_impression_floor": 100,
+    "thin_evidence_pct_of_test": 25.8
+  },
+  "monitoring_triggers": [
+    {
+      "signal": "Test-set base rate drift, month over month",
+      "trigger": "Moves >~10 percentage points → traffic environment shifted, retrain before trusting the queue"
+    },
+    {
+      "signal": "Model ROC-AUC on a fresh holdout",
+      "trigger": "Drops meaningfully below 0.637 → treat the queue as unreliable until retrained"
+    },
+    {
+      "signal": "Rule/model agreement rate",
+      "trigger": "Sudden drop from ~69.5% → one of the two signals likely broke"
+    },
+    {
+      "signal": "Churn/join-drop rate",
+      "trigger": "Sharp rise above ~10.3% → more pages disappearing between months than usual"
+    },
+    {
+      "signal": "Reviewer override rate",
+      "trigger": "Rising overrides is the most direct signal the queue's advice is drifting"
+    }
+  ],
+  "reproducibility": {
+    "seed": 42,
+    "notebooks": [
+      {
+        "label": "w05: model build, split design, feature policy",
+        "url": "https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter/blob/main/work/notebooks/w05_model_%20(1).ipynb"
+      },
+      {
+        "label": "w06: validation & leakage audit (the split comparison in Figure 1)",
+        "url": "https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter/blob/main/work/notebooks/w06_validation_audit%20(2).ipynb"
+      },
+      {
+        "label": "w07: the action playbook, the final Random Forest run, and every Results number above",
+        "url": "https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter/blob/main/work/notebooks/w07_action_playbook%20(1).ipynb"
+      },
+      {
+        "label": "capstone.ipynb: the notebook this paper mirrors",
+        "url": "https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter/blob/main/work/notebooks/capstone.ipynb"
+      },
+      {
+        "label": "Full repository",
+        "url": "https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter"
+      }
+    ]
+  }
+}

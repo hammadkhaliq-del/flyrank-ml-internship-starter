@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Which pages should a content editor review first? Refresh Opportunity Scoring</title>
+  <meta name="description"
+    content="A research paper on ranking declining content pages for review, built on 79M rows of FlyRank search performance data.">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+  <header class="hero">
+    <div class="wrap">
+      <p class="kicker">Research paper · FlyRank ML Internship, Lane 2</p>
+      <h1 class="title">Which declining pages should a content editor review first?</h1>
+      <p class="subline">A ranked, reason-coded review queue built on FlyRank's production search
+        warehouse, validated on a client-held-out split, benchmarked against a hand-built rule.</p>
+      <div class="meta">
+        <span>Hammad Khaliq</span>
+        <span>BS AI, COMSATS University Islamabad</span>
+        <span>March–April 2026 data</span>
+        <span>Aug 2026</span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#abstract">Abstract</a>
+    <a href="#intro">Introduction</a>
+    <a href="#data">Data</a>
+    <a href="#method">Methodology</a>
+    <a href="#results">Results</a>
+    <a href="#limits">Limitations</a>
+    <a href="#recs">Recommendations</a>
+    <a href="#repro">Reproducibility</a>
+    <a href="#credit">Acknowledgments</a>
+  </nav>
+
+  <main class="wrap">
+
+    <section id="abstract">
+      <p class="eyebrow">Abstract</p>
+      <div class="abstract-box">
+        <p><strong>Question:</strong> Out of a large content inventory, which pages are worth a
+          human editor's time first this week? <strong>Data:</strong> FlyRank's pseudonymized search
+          warehouse, 176,738 client-owned pages with March 2026 search activity, matched against
+          April 2026 outcomes across 46 clients. <strong>Method:</strong> a forward-looking label
+          (<code>is_declining_next</code>, impressions drop &gt;20% month over month), a
+          client-grouped train/test split to prevent client-identity leakage, and a Random Forest
+          benchmarked against a hand-built CTR-gap rule on the exact same held-out rows.
+          <strong>Result:</strong> the model separates decliners from non-decliners at ROC-AUC 0.637
+          against a 0.47 base rate, and a leakage audit on the same pipeline showed a naive random
+          split had overstated performance by leaking 45 of 46 clients across train/test. <strong>Use:</strong>
+          the output is a prioritization aid for a human reviewer, not an auto-publish system. Every
+          recommendation below is stated at the strength the evidence actually supports.
+        </p>
+      </div>
+    </section>
+
+    <section id="intro">
+      <p class="eyebrow">1 · Introduction</p>
+      <h2>The decision this supports</h2>
+      <p>A content team managing thousands of pages per client cannot manually review every page
+        every month. Today the choice of what to look at first comes down to a simple hand-rule or
+        gut feel, and with a large inventory, most declining pages never get looked at at all.</p>
+      <p>This work answers one question: <strong>given a page's search performance last month,
+          should a human review it this month, and why?</strong> The output is a ranked queue with a
+        reason code attached to every entry, not a black-box score.</p>
+      <p><strong>Who acts on it:</strong> a content editor or SEO strategist works down the queue
+        and decides, per page, whether to refresh, monitor, or leave it, informed by, not replaced
+        by, the model.</p>
+      <p><strong>Cost of a wrong call:</strong> a false positive costs an editor's time reviewing a
+        page that didn't need it. A false negative costs a real decline going unnoticed for another
+        month. Neither is free, which is why the queue routes uncertain and low-evidence pages to
+        <em>human review</em> or <em>no action</em> rather than forcing a confident call either way.
+      </p>
+    </section>
+
+    <section id="data">
+      <p class="eyebrow">2 · Data</p>
+      <h2>What this is built on</h2>
+      <p>FlyRank's internship warehouse, a pseudonymized, production-scale release of daily search
+        performance, roughly <strong>79 million rows</strong> hosted as Parquet and queried directly
+        via DuckDB (no full download). This paper uses two monthly partitions from that release:</p>
+
+      <div class="stat-row" id="data-stats">
+        <!-- Hydrated from data/results.json; static fallback below if JS/fetch is unavailable -->
+        <div class="stat">
+          <div class="n">176,738</div>
+          <div class="l">March-eligible pages with GSC data</div>
+        </div>
+        <div class="stat">
+          <div class="n">158,549</div>
+          <div class="l">pages with a matched April outcome</div>
+        </div>
+        <div class="stat">
+          <div class="n">46</div>
+          <div class="l">distinct pseudonymous clients</div>
+        </div>
+        <div class="stat">
+          <div class="n">10.4M</div>
+          <div class="l">rows in the April daily-fact partition alone</div>
+        </div>
+      </div>
+
+      <h3>Tables and windows</h3>
+      <ul>
+        <li><code>fact_content_daily_performance</code>: partitioned by month; <code>month=2026-03</code>
+          supplies the features, <code>month=2026-04</code> supplies the outcome. Rows are filtered to
+          <code>gsc_data_available IS TRUE</code> and non-zero March impressions.
+        </li>
+        <li><code>content_hash_id</code> / <code>client_hash_id</code>, pseudonymous identifiers,
+          used only for joins and for grouping the train/test split, never as model features.</li>
+      </ul>
+
+      <h3>What was excluded, and why</h3>
+      <ul>
+        <li><strong>Content metadata</strong> (<code>word_count</code>, <code>content_type</code>,
+          <code>last_optimized_date</code> from <code>dim_content</code>). These describe the page's
+          <em>current</em> state, not its state at the point the feature window closed. Using them
+          would let information from after the prediction date leak into the features.
+        </li>
+        <li><strong>18,189 pages (10.3%)</strong> that appeared in March but never got a matched
+          April row. These vanished between months and are invisible to this whole comparison. See
+          Limitations for why this matters.</li>
+        <li><strong>No client names, page URLs, or raw queries</strong> appear anywhere in this
+          paper or the underlying notebooks. Every identifier below is a pseudonymous hash.</li>
+      </ul>
+    </section>
+
+    <section id="method">
+      <p class="eyebrow">3 · Methodology</p>
+      <h2>Label, features, baseline, and how the split was defended</h2>
+
+      <h3>The label</h3>
+      <p><code>is_declining_next = 1</code> when a page's Google Search Console impressions drop
+        more than 20% from March to April, restricted to pages with search data available in both
+        months. This mirrors the starter kit's own trend-direction threshold, applied forward instead
+        of retrospectively. The label is built strictly from the month <em>after</em> the feature
+        window, so nothing about April leaks into March's numbers.</p>
+
+      <h3>Features</h3>
+      <p>All derived from the March partition only: <code>impressions_month</code>,
+        <code>clicks_month</code>, <code>avg_position_month</code>, <code>ctr_month</code>, log-scaled
+        impression and click counts, and a five-bucket <code>position_bucket</code> category. No
+        current-state content metadata is included (see Data).
+      </p>
+
+      <h3>The baseline rule</h3>
+      <p>A hand-built rule from an earlier stage of this project: flag a page when it has a
+        "decent" position (≤20) <em>and</em> its click-through rate underperforms its position band's
+        average by more than 30%, weighted by demand (impressions). The one data-dependent piece of
+        the rule, the expected CTR per position band, was recalibrated on the training split only,
+        not the full dataset, so the comparison to the model is fair.</p>
+
+      <h3>Validation design</h3>
+      <p>Rows are split with <code>GroupShuffleSplit</code>, grouped by <code>client_hash_id</code>,
+        75/25 train/test. This keeps every client entirely on one side of the split. A random
+        row-level split would let the same client's pages sit in both train and test, letting the
+        model learn that client's own baseline noise rather than a pattern that generalizes to a new
+        client.</p>
+
+      <h3>Leakage checks run</h3>
+      <ul>
+        <li><strong>Split-design ablation:</strong> the same model was scored once on a naive random
+          row split and once on the client-grouped split, to measure how much of the naive score was
+          client-identity memorization rather than signal (Results, Figure 1).</li>
+        <li><strong>Single-feature collapse test:</strong> the model was retrained with each of its
+          three strongest features removed one at a time. None caused the ROC-AUC to collapse toward
+          the base rate, the signature the leakage checklist treats as a confession of a
+          label-derived feature. No such feature was found in this set.</li>
+        <li><strong>Content-metadata exclusion, verified empirically:</strong> confirmed by
+          inspection that no current-state <code>dim_content</code> column made it into the feature
+          set, not just stated as policy.</li>
+      </ul>
+    </section>
+
+    <section id="results">
+      <p class="eyebrow">4 · Results</p>
+      <h2>Model vs. baseline, same held-out rows</h2>
+
+      <p>Two results are reported here, from two runs on this pipeline: the split-design audit
+        (logistic regression, before/after the leakage fix) and the final playbook run (random
+        forest, the model this queue is built on).</p>
+
+      <figure>
+        <img src="img/01_leakage_gap.png"
+          alt="Bar chart comparing ROC-AUC and F1 for a random row split versus a client-grouped split">
+        <figcaption><span class="take">Split design moved the score by itself.</span> The same
+          logistic regression, evaluated on the same underlying data, scored ROC-AUC 0.628 → 0.664
+          and F1 0.581 → 0.615 once the split stopped leaking clients across train and test. A naive
+          random split let 45 of 46 clients appear on both sides. Part of the "before" number was
+          the model recognizing individual clients, not decline patterns.</figcaption>
+      </figure>
+
+      <p>The final queue is built on a <strong>Random Forest</strong>, trained on 135,314 rows (34
+        clients) and evaluated on a held-out 23,235 rows (12 clients) that never touched training.</p>
+
+      <figure>
+        <img src="img/02_model_vs_baserate.png"
+          alt="Bar chart of ROC-AUC, precision, recall, and F1 for the random forest model against the 0.47 base rate">
+        <figcaption><span class="take">The model separates decliners from non-decliners above chance,
+            with recall favored over precision.</span> ROC-AUC 0.637 against a 0.47 base rate; precision
+          0.558, recall 0.688, F1 0.616. The rule baseline has no probability score to compare
+          ROC-AUC against directly. Its own flag rate on the same rows was 47.4%, close to the base
+          rate itself, while the model's flag rate was 57.9%, casting a wider net.</figcaption>
+      </figure>
+
+      <h3>Where the queue sends the 23,235 held-out pages</h3>
+      <figure>
+        <img src="img/03_action_mix.png" alt="Horizontal bar chart of the four action categories and their page counts">
+        <figcaption><span class="take">Not every page gets a confident call.</span> 25.8% of the
+          test set falls below a 100-impression evidence floor and is routed to
+          <code>no_action_thin_evidence</code> rather than scored. There isn't enough signal to
+          trust a decision either way. 20.0% land in <code>human_review_required</code>, where the
+          rule and model disagree.
+        </figcaption>
+      </figure>
+
+      <figure>
+        <img src="img/04_agreement.png" alt="Donut chart showing the rule and model agree 69.5% of the time">
+        <figcaption><span class="take">The rule and model agree about 7 times in 10.</span> The
+          remaining 30.5%, the disagreement zone, is exactly the group routed to human review rather
+          than averaged away, because earlier analysis on this same pipeline found real, non-random
+          cases in that zone, not noise.</figcaption>
+      </figure>
+    </section>
+
+    <section id="limits">
+      <p class="eyebrow">5 · Limitations &amp; honest framing</p>
+      <h2>What this work cannot claim</h2>
+
+      <div class="callout warn">
+        <p><strong>This is cross-sectional, single-snapshot decision support, not a causal
+            claim.</strong> "These pages are worth reviewing first, because the model's forward-looking
+          signal says so" is the sentence this evidence carries. "Refreshing these pages will fix
+          them" is not. No experiment was run.</p>
+      </div>
+
+      <ul>
+        <li><strong>The churn-bias gap.</strong> 18,189 pages (10.3%) that had March activity never
+          got a matched April outcome and are invisible to this entire comparison, likely
+          disproportionately the worst-outcome pages, since a page can vanish from search data by
+          losing all visibility. Both the rule and the model are blind to this group in the same way.</li>
+        <li><strong>Single time window.</strong> The model learned March→April patterns for this
+          specific client mix. A different season, or a newly onboarded client with a different
+          traffic profile, may not match what it learned.</li>
+        <li><strong>Client-grouped validation proves generalization within this snapshot, not
+            beyond it.</strong> The split shows the model works on clients it never trained on, among
+          the clients present in this release. It says nothing about a client whose industry or
+          traffic pattern looks nothing like anyone here.</li>
+        <li><strong>Modest recall/precision.</strong> Precision 0.558 means roughly 4 in 9 flagged
+          pages are, per this label, not actually declining next month. This is a triage aid, and
+          every flag still needs a human look before action.</li>
+        <li><strong>The decay/refresh relationship is associational, not causal.</strong> Any
+          pattern where "pages that got refreshed later scored better" compares pages that were
+          <em>chosen</em> for refresh against pages that weren't. Content teams likely chose pages
+          that still had some residual signal worth saving. Part of any observed lift is the choosing,
+          not the refresh. This paper does not claim refreshing a flagged page will fix it, only that
+          the page is worth a look.
+        </li>
+      </ul>
+    </section>
+
+    <section id="recs">
+      <p class="eyebrow">6 · Ranked recommendations</p>
+      <h2>The action playbook</h2>
+      <p>A plain-English archetype-to-action map a reviewer can sanity-check without opening the
+        model:</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Archetype</th>
+            <th>What it means</th>
+            <th>Suggested action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Declining + low CTR on a visible page</td>
+            <td>Ranks fine and gets seen, but click-through underperforms what that position
+              normally earns</td>
+            <td><strong>Refresh title/meta, review CTR</strong>. Cheapest fix; the page already
+              has position</td>
+          </tr>
+          <tr>
+            <td>Declining + model flags forward risk only</td>
+            <td>Model sees risk; CTR isn't the obvious lever</td>
+            <td><strong>Refresh content, re-review after 30 days</strong>, less certain than the
+              CTR case</td>
+          </tr>
+          <tr>
+            <td>Rule and model agree (stable)</td>
+            <td>Both signals agree the page is fine</td>
+            <td><strong>Monitor only</strong>, no action; cheapest of all is doing nothing</td>
+          </tr>
+          <tr>
+            <td>Rule and model disagree</td>
+            <td>One signal says act, the other says don't</td>
+            <td><strong>Human review required before any action</strong>, this zone contains real,
+              non-random cases, not noise</td>
+          </tr>
+          <tr>
+            <td>Thin evidence</td>
+            <td>Below the 100-impression floor, barely enough traffic to measure a trend from</td>
+            <td><strong>No action from this pipeline</strong>, unscored, not confirmed healthy</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>What should not be automated</h3>
+      <ul>
+        <li>No auto-publish. Every flagged page gets a human read before a content change. The
+          model has no access to brand voice, legal constraints, or client-specific context.</li>
+        <li>No auto-scheduling refreshes from a model risk flag alone. That's a forward signal, not
+          a confirmed cause.</li>
+        <li>No scoring a client the model has never seen without first checking their traffic
+          profile resembles a client it trained on.</li>
+        <li>No treating thin-evidence pages as "confirmed fine". They're unscored, not cleared.</li>
+      </ul>
+
+      <h3>Monitoring: what would tell you this went stale</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Signal</th>
+            <th>Rough trigger</th>
+          </tr>
+        </thead>
+        <tbody id="monitoring-table-body">
+          <!-- Hydrated from data/results.json; static fallback below -->
+          <tr>
+            <td>Test-set base rate drift, month over month</td>
+            <td>Moves &gt;~10 percentage points → traffic environment shifted, retrain before trusting the queue</td>
+          </tr>
+          <tr>
+            <td>Model ROC-AUC on a fresh holdout</td>
+            <td>Drops meaningfully below 0.637 → treat the queue as unreliable until retrained</td>
+          </tr>
+          <tr>
+            <td>Rule/model agreement rate</td>
+            <td>Sudden drop from ~69.5% → one of the two signals likely broke</td>
+          </tr>
+          <tr>
+            <td>Churn/join-drop rate</td>
+            <td>Sharp rise above ~10.3% → more pages disappearing between months than usual</td>
+          </tr>
+          <tr>
+            <td>Reviewer override rate</td>
+            <td>Rising overrides is the most direct signal the queue's advice is drifting</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Retrain cadence: monthly, matching the feature-month → label-month cadence this whole
+        design is built on.</p>
+    </section>
+
+    <section id="repro">
+      <p class="eyebrow">7 · Reproducibility</p>
+      <h2>Rerun or inspect this work</h2>
+      <p>Every number above traces back to a notebook committed in the repo, run against the live
+        warehouse via DuckDB. Seeds are fixed (<code>random_state=<span id="seed-value">42</span></code> throughout).
+      </p>
+      <ul id="repro-list">
+        <!-- Hydrated from data/results.json; static fallback below -->
+        <li><a
+            href="https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter/blob/main/work/notebooks/w05_model_(1).ipynb">w05:
+            model build, split design, feature policy</a></li>
+        <li><a
+            href="https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter/blob/main/work/notebooks/w06_validation_audit%20(2).ipynb">w06:
+            validation &amp; leakage audit (the split comparison in Figure 1)</a></li>
+        <li><a
+            href="https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter/blob/main/work/notebooks/w07_action_playbook%20(1).ipynb">w07:
+            the action playbook, the final Random Forest run, and every Results number above</a></li>
+        <li><a
+            href="https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter/blob/main/work/notebooks/capstone%20(1).ipynb">capstone.ipynb:
+            the notebook this paper mirrors</a></li>
+        <li><a href="https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter">Full repository</a></li>
+      </ul>
+      <p>To rerun: open any notebook via its Colab badge, supply a Hugging Face access token as the
+        <code>AccessToken</code> Colab secret (read access to the warehouse dataset), and run top to
+        bottom.
+      </p>
+    </section>
+
+    <section id="credit">
+      <p class="eyebrow">8 · Acknowledgments &amp; data credit</p>
+      <div class="credit-box">
+        <p>Built on the FlyRank ML Internship dataset, a pseudonymized, production-scale search
+          performance warehouse provided as part of the FlyRank ML Internship program.
+          Learn more at <a href="https://flyrank.ai">flyrank.ai</a>.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <p>Hammad Khaliq · BS Artificial Intelligence, COMSATS University Islamabad</p>
+      <div class="footer-links">
+        <a href="https://hammadkhaliqs.netlify.app/">Portfolio</a>
+        <a href="https://github.com/hammadkhaliq-del/flyrank-ml-internship-starter">Repository</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+
+</html>
