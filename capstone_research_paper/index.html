@@ -55,7 +55,12 @@
           against a 0.47 base rate, and a leakage audit on the same pipeline showed a naive random
           split had overstated performance by leaking 45 of 46 clients across train/test. <strong>Use:</strong>
           the output is a prioritization aid for a human reviewer, not an auto-publish system. Every
-          recommendation below is stated at the strength the evidence actually supports.
+          recommendation below is stated at the strength the evidence actually supports. This paper
+          is the case study for FlyRank ML Internship <strong>Lane 2: Refresh / Content
+            Opportunity Scoring</strong>, whose founding question, in the lane's own words, is
+          which pages should be reviewed first for refresh, expansion, protection, pruning, or
+          monitoring. What follows is one answer to that question, built and checked on FlyRank's
+          own production search data.
         </p>
       </div>
     </section>
@@ -63,9 +68,13 @@
     <section id="intro">
       <p class="eyebrow">1 · Introduction</p>
       <h2>The decision this supports</h2>
-      <p>A content team managing thousands of pages per client cannot manually review every page
-        every month. Today the choice of what to look at first comes down to a simple hand-rule or
-        gut feel, and with a large inventory, most declining pages never get looked at at all.</p>
+      <p>This is a case study grown from FlyRank ML Internship <strong>Lane 2 (Refresh / Content
+          Opportunity Scoring)</strong>: the kind of content-operations problem an agency's clients
+        run into, studied on FlyRank's own pseudonymized production search data rather than a
+        synthetic or toy dataset. A content team managing thousands of pages per client cannot
+        manually review every page every month. Today the choice of what to look at first comes
+        down to a simple hand-rule or gut feel, and with a large inventory, most declining pages
+        never get looked at at all.</p>
       <p>This work answers one question: <strong>given a page's search performance last month,
           should a human review it this month, and why?</strong> The output is a ranked queue with a
         reason code attached to every entry, not a black-box score.</p>
